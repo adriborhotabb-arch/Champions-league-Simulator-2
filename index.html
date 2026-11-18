@@ -18,18 +18,33 @@ button.sec{background:var(--card);color:var(--tx);border:1px solid var(--bd)}
 .mu{color:var(--mu)}.win{font-weight:700}
 .row{display:flex;justify-content:space-between;gap:8px}
 .champ{font-size:1.3rem;font-weight:800;text-align:center;padding:16px}
+.bar{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;font-size:.9rem}
+.lupa{padding:0 6px;margin:0 0 0 4px;font-size:.8rem;background:var(--card);border:1px solid var(--bd)}
+dialog{max-width:640px;width:92%;background:var(--card);color:var(--tx);border:1px solid var(--bd);border-radius:12px}
+table{width:100%;border-collapse:collapse;font-size:.9rem;display:block;overflow-x:auto}
+td,th{padding:4px 8px;border-bottom:1px solid var(--bd);text-align:left;white-space:nowrap}
+.note{font-size:.8rem;color:var(--mu)}
 </style></head><body><main>
 <h1>⚽ Simulador de la Champions</h1>
-<div id="setup" class="card">
+<div class="card bar"><span id="st">Datos: ratings integrados</span><div><button id="upd" class="sec">Actualizar datos</button><button id="dat" class="sec">Ver datos</button><label><input type="checkbox" id="auto"> Auto (30 min)</label></div></div>
+<div><button id="t1">Torneo</button><button id="t2" class="sec">Partido suelto</button></div>
+<div id="tor"><div id="setup" class="card">
   <p>Elige tu equipo:</p>
   <select id="sel"></select>
   <div id="custom" hidden><input id="cn" placeholder="Nombre del equipo"><input id="cp" placeholder="País (3 letras, ej: ESP)" maxlength="3" size="12"></div>
+  <div class="mu">Tu grupo: <select id="grp"></select></div>
   <div><button id="go">Empezar torneo</button></div>
 </div>
 <div id="log"></div>
 <div id="ctl" hidden style="position:sticky;bottom:8px"><button id="next" style="width:100%;padding:14px"></button></div>
 <div id="end" hidden class="card"><button id="again">Reiniciar con el mismo equipo</button><button id="other" class="sec">Cambiar de equipo</button></div>
+</div>
+<div id="pv" hidden><div class="card"><p>Elige los dos equipos (puedes escribir cualquier club). El primero juega en casa.</p>
+<input id="pa" list="eqs" placeholder="Equipo local"><input id="pb" list="eqs" placeholder="Equipo visitante">
+<datalist id="eqs"></datalist><label><input type="checkbox" id="neu"> Campo neutral</label><div><button id="sim">Simular partido</button></div></div>
+<div id="pvout"></div></div>
 </main>
+<dialog id="dlg"><div id="dc"></div><button onclick="this.closest('dialog').close()">Cerrar</button></dialog>
 <script>
 const BOMBOS_ORIGINAL={
 1:[["Real Madrid","ESP"],["Man. City","ENG"],["Bayern","GER"],["PSG","FRA"],["Inter","ITA"],["Barcelona","ESP"],["Arsenal","ENG"],["Dortmund","GER"]],
@@ -38,7 +53,7 @@ const BOMBOS_ORIGINAL={
 4:[["Celtic","SCO"],["PSV","NED"],["Galatasaray","TUR"],["Brujas","BEL"],["Shakhtar","UKR"],["Salzburgo","AUT"],["Young Boys","SUI"],["Estrella Roja","SRB"]]};
 const RATINGS={"Real Madrid":2050,"Man. City":2050,"Bayern":2000,"PSG":1950,"Inter":1950,"Barcelona":1950,"Arsenal":1980,"Dortmund":1850,"Atletico":1880,"Liverpool":1960,"Leverkusen":1880,"Juventus":1830,"Milan":1800,"Benfica":1800,"Napoli":1800,"Monaco":1740,"Sevilla":1720,"Chelsea":1850,"Leipzig":1800,"Oporto":1760,"Ajax":1720,"Lille":1730,"Roma":1760,"Sporting":1780,"Celtic":1650,"PSV":1730,"Galatasaray":1680,"Brujas":1670,"Shakhtar":1640,"Salzburgo":1650,"Young Boys":1600,"Estrella Roja":1600};
 const RATING_DEFECTO=1650,GOLES_BASE=1.35,ESCALA=800,VENTAJA_LOCAL=60,VARIACION_FORMA=35,NUM_GRUPOS=8;
-let bombos={},fuerza={},mio=null,gen=null,pm=null;
+let bombos={},fuerza={},mio=null,gen=null,pm=null,forma={},reg=[],grupoElegido=null,FEED={};
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const nm=e=>e===mio?`<span class="mine">${esc(e)}</span>`:esc(e);
@@ -47,11 +62,12 @@ const shuffle=a=>{for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()
 const gauss=(m,s)=>m+s*Math.sqrt(-2*Math.log(1-Math.random()))*Math.cos(2*Math.PI*Math.random());
 
 // ---- modelo de partidos ----
-function calcularFuerza(){const f={};for(const n in bombos)for(const[e]of bombos[n])f[e]=(RATINGS[e]??RATING_DEFECTO)+gauss(0,VARIACION_FORMA);return f}
+function calcularFuerza(){for(const n in bombos)for(const[e]of bombos[n])forma[e]=gauss(0,VARIACION_FORMA);return{}}
 function poisson(l){const lim=Math.exp(-l);let k=0,p=1;while(true){p*=Math.random();if(p<=lim)return k;k++}}
-function jugar(a,b,neutral=false,factor=1){const d=fuerza[a]-fuerza[b]+(neutral?0:VENTAJA_LOCAL);
- return[poisson(GOLES_BASE*Math.exp(d/ESCALA)*factor),poisson(GOLES_BASE*Math.exp(-d/ESCALA)*factor)]}
-function penaltis(a,b){const p=Math.max(.4,Math.min(.6,.5+(fuerza[a]-fuerza[b])/4000));return Math.random()<p?a:b}
+function jugar(a,b,neutral=false,factor=1){const ra=rating(a),rb=rating(b),fa=forma[a]||0,fb=forma[b]||0,home=neutral?0:VENTAJA_LOCAL,d=ra+fa-rb-fb+home,
+ la=GOLES_BASE*Math.exp(d/ESCALA)*factor,lb=GOLES_BASE*Math.exp(-d/ESCALA)*factor,ga=poisson(la),gb=poisson(lb);
+ reg.push({a,b,ra,rb,fa,fb,home,la,lb,ga,gb,factor});return[ga,gb,reg.length-1]}
+function penaltis(a,b){const p=Math.max(.4,Math.min(.6,.5+(fz(a)-fz(b))/4000));return Math.random()<p?a:b}
 
 // ---- sorteo ----
 function grupoValido(g,pais,nb){return g.length<nb&&!g.some(x=>x[1]===pais)}
@@ -64,9 +80,9 @@ function sortear(){while(true){const grupos=Array.from({length:NUM_GRUPOS},()=>[
 function faseDeGrupos(grupos){const pri=[],seg=[];let html='<h2>Fase de grupos</h2><div class="groups">';let extra="";
  grupos.forEach((grupo,i)=>{const nom=grupo.map(x=>x[0]),t={};nom.forEach(e=>t[e]=[0,0,0]);let mios="";
   for(let a=0;a<4;a++)for(let b=a+1;b<4;b++)for(const[l,v]of[[nom[a],nom[b]],[nom[b],nom[a]]]){
-   const[ga,gb]=jugar(l,v);t[l][1]+=ga;t[l][2]+=gb;t[v][1]+=gb;t[v][2]+=ga;
+   const[ga,gb,id]=jugar(l,v);t[l][1]+=ga;t[l][2]+=gb;t[v][1]+=gb;t[v][2]+=ga;
    if(ga>gb)t[l][0]+=3;else if(gb>ga)t[v][0]+=3;else{t[l][0]++;t[v][0]++}
-   if(mio===l||mio===v)mios+=`<div>» ${nm(l)} ${ga}-${gb} ${nm(v)}</div>`}
+   if(mio===l||mio===v)mios+=`<div>» ${nm(l)} ${ga}-${gb} ${nm(v)}${lp(id)}</div>`}
   const orden=nom.map(e=>({e,r:Math.random()})).sort((x,y)=>t[y.e][0]-t[x.e][0]||(t[y.e][1]-t[y.e][2])-(t[x.e][1]-t[x.e][2])||t[y.e][1]-t[x.e][1]||y.r-x.r).map(o=>o.e);
   html+=`<div class="card"><b>Grupo ${String.fromCharCode(65+i)}</b>`+orden.map((e,p)=>`<div class="row"><span>${p+1}. ${nm(e)}</span><span class="mu">${t[e][0]} pts (${t[e][1]}-${t[e][2]})</span></div>`).join("")+
    (mios?`<hr style="border:0;border-top:1px solid var(--bd)"><div class="mu">${mios}</div>`:"")+
@@ -77,13 +93,13 @@ function faseDeGrupos(grupos){const pri=[],seg=[];let html='<h2>Fase de grupos</
 // ---- eliminatoria ----
 function emparejar(pri,seg){while(true){shuffle(seg);if(pri.every((p,k)=>p[1]!==seg[k][1]))break}return pri.map((p,k)=>[p[0],seg[k][0]])}
 const fl=(t,w)=>w?`<span class="win">${t}</span>`:t;
-function finalUnica(a,b){let[ga,gb]=jugar(a,b,true),h=`<div>${nm(a)} ${ga}-${gb} ${nm(b)}</div>`;
+function finalUnica(a,b){let[ga,gb,i0]=jugar(a,b,true),h=`<div>${nm(a)} ${ga}-${gb} ${nm(b)}${lp(i0)}</div>`;
  if(ga!==gb)return[ga>gb?a:b,h];
  const[ea,eb]=jugar(a,b,true,1/3);ga+=ea;gb+=eb;h+=`<div class="mu">Prórroga: ${esc(a)} ${ga}-${gb} ${esc(b)}</div>`;
  if(ga!==gb)return[ga>gb?a:b,h];
  const g=penaltis(a,b);return[g,h+`<div class="mu">Gana en los penaltis: ${nm(g)}</div>`]}
-function dobleP(a,b){const[gb1,ga1]=jugar(b,a),[ga2,gb2]=jugar(a,b);let ta=ga1+ga2,tb=gb1+gb2;
- let h=`<div>Ida: ${nm(b)} ${gb1}-${ga1} ${nm(a)}</div><div>Vuelta: ${nm(a)} ${ga2}-${gb2} ${nm(b)}</div>`;
+function dobleP(a,b){const[gb1,ga1,i1]=jugar(b,a),[ga2,gb2,i2]=jugar(a,b);let ta=ga1+ga2,tb=gb1+gb2;
+ let h=`<div>Ida: ${nm(b)} ${gb1}-${ga1} ${nm(a)}${lp(i1)}</div><div>Vuelta: ${nm(a)} ${ga2}-${gb2} ${nm(b)}${lp(i2)}</div>`;
  if(ta!==tb){const g=ta>tb?a:b;return[g,h+`<div class="mu">Global ${ta}-${tb} → pasa ${nm(g)}</div>`]}
  const[ea,eb]=jugar(a,b,false,1/3);ta+=ea;tb+=eb;h+=`<div class="mu">Prórroga: ${ea}-${eb}</div>`;
  if(ta!==tb){const g=ta>tb?a:b;return[g,h+`<div class="mu">Global ${ta}-${tb} → pasa ${nm(g)}</div>`]}
@@ -105,6 +121,7 @@ function* eliminatoria(partidos,vivo){const N={8:"Octavos",4:"Cuartos",2:"Semifi
 function* torneo(){fuerza=calcularFuerza();
  yield "Hacer el sorteo";
  const grupos=sortear();
+ if(grupoElegido!==null){const k=grupos.findIndex(g=>g.some(x=>x[0]===mio));[grupos[k],grupos[grupoElegido]]=[grupos[grupoElegido],grupos[k]]}
  out('<h2>Sorteo de grupos</h2><div class="groups">'+grupos.map((g,i)=>`<div class="card"><b>Grupo ${String.fromCharCode(65+i)}</b>`+g.map(([e,p])=>`<div>${nm(e)} <span class="mu">(${esc(p)})</span></div>`).join("")+"</div>").join("")+"</div>");
  yield "Jugar la fase de grupos";
  const[pri,seg]=faseDeGrupos(grupos);
@@ -116,7 +133,7 @@ function* torneo(){fuerza=calcularFuerza();
 
 // ---- control ----
 function avanzar(){const r=gen.next();if(r.done){$("ctl").hidden=true;$("end").hidden=false;$("end").scrollIntoView({block:"nearest",behavior:"smooth"})}else $("next").textContent=r.value}
-function empezar(nombre,pais){bombos=JSON.parse(JSON.stringify(BOMBOS_ORIGINAL));
+function empezar(nombre,pais){grupoElegido=$('grp').value===''?null:+$('grp').value;bombos=JSON.parse(JSON.stringify(BOMBOS_ORIGINAL));
  const ya=Object.values(bombos).flat().find(x=>x[0].toLowerCase()===nombre.toLowerCase());
  if(ya)mio=ya[0];
  else{mio=nombre;pm=pais;const i=Math.floor(Math.random()*8),sale=bombos[4][i];bombos[4][i]=[nombre,pais];
@@ -134,4 +151,47 @@ $("next").onclick=avanzar;
 $("again").onclick=()=>{$("log").innerHTML="";const x=Object.values(BOMBOS_ORIGINAL).flat().find(x=>x[0]===mio);
  empezar(mio,x?x[1]:pm)};
 $("other").onclick=()=>{$("log").innerHTML="";$("end").hidden=true;$("setup").hidden=false};
+
+// ===== datos en directo, análisis, partido suelto =====
+const todos0=()=>Object.values(BOMBOS_ORIGINAL).flat().map(x=>x[0]);
+const ALIAS={"Man. City":["Man City"],"PSG":["Paris SG","Paris Saint-Germain"],"Oporto":["Porto"],"Brujas":["Brugge","Club Brugge"],"Salzburgo":["Salzburg"],"Estrella Roja":["Crvena Zvezda","Red Star"],"Leipzig":["RB Leipzig"],"Bayern":["Bayern Munich"],"Atletico":["Atletico Madrid"]};
+const norm=t=>String(t).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase().trim();
+const buscar=e=>{for(const c of [e,...(ALIAS[e]||[])]){const v=FEED[norm(c)];if(v)return v}};
+const rating=e=>buscar(e)??RATINGS[e]??RATING_DEFECTO;
+const fz=e=>rating(e)+(forma[e]||0);
+const fuente=e=>buscar(e)!=null?"Club Elo (directo)":RATINGS[e]!=null?"integrado":"por defecto";
+const lp=i=>`<button class="lupa" data-i="${i}" title="Ver análisis">🔍</button>`;
+async function actualizar(){const st=$("st");st.textContent="Descargando datos…";
+ try{const r=await fetch("https://api.clubelo.com/"+new Date().toISOString().slice(0,10),{cache:"no-store"});if(!r.ok)throw 0;
+  const L=(await r.text()).trim().split("\n"),H=L[0].split(","),ci=H.indexOf("Club"),ei=H.indexOf("Elo"),m={};
+  for(const l of L.slice(1)){const c=l.split(",");if(+c[ei])m[norm(c[ci])]=+c[ei]}
+  if(!Object.keys(m).length)throw 0;FEED=m;
+  st.textContent=`✅ Club Elo en directo: ${todos0().filter(buscar).length}/32 equipos (${new Date().toLocaleTimeString()})`}
+ catch(x){st.textContent="⚠️ Sin datos en directo: usando ratings integrados (hace falta abrir la web con internet; el servicio puede bloquear el acceso)"}}
+function pw(la,lb){let w=0,d=0,l=0;const f=[1];for(let k=1;k<=12;k++)f[k]=f[k-1]*k;const P=(x,k)=>Math.exp(-x)*x**k/f[k];
+ for(let i=0;i<=12;i++)for(let j=0;j<=12;j++){const p=P(la,i)*P(lb,j);i>j?w+=p:i<j?l+=p:d+=p}return[w,d,l]}
+function analizar(r){const dR=r.ra-r.rb,dF=r.fa-r.fb,dH=r.home,sys=(r.la-r.lb)**2,S=sys/(sys+r.la+r.lb)*100,
+ ab=Math.abs(dR)+Math.abs(dF)+Math.abs(dH)||1,pc=x=>(Math.abs(x)/ab*S).toFixed(1)+"%",[w,d,l]=pw(r.la,r.lb),sg=x=>(x>=0?"+":"")+Math.round(x),p=x=>(x*100).toFixed(0)+"%";
+ return `<h3>${esc(r.a)} ${r.ga}-${r.gb} ${esc(r.b)}${r.factor<1?" (prórroga)":""}</h3>
+ <table><tr><th>Factor</th><th>${esc(r.a)}</th><th>${esc(r.b)}</th><th>Influencia</th></tr>
+ <tr><td>Rating base</td><td>${Math.round(r.ra)}</td><td>${Math.round(r.rb)}</td><td>${pc(dR)}</td></tr>
+ <tr><td>Fuente del rating</td><td>${fuente(r.a)}</td><td>${fuente(r.b)}</td><td></td></tr>
+ <tr><td>Forma en este torneo</td><td>${sg(r.fa)}</td><td>${sg(r.fb)}</td><td>${pc(dF)}</td></tr>
+ <tr><td>${r.home?"Campo (local: "+esc(r.a)+")":"Campo neutral"}</td><td>${sg(r.home)}</td><td>0</td><td>${pc(dH)}</td></tr>
+ <tr><td>Azar (Poisson)</td><td colspan="2">—</td><td>${(100-S).toFixed(1)}%</td></tr>
+ <tr><td>Goles esperados</td><td>${r.la.toFixed(2)}</td><td>${r.lb.toFixed(2)}</td><td></td></tr>
+ <tr><td>Prob. victoria / empate</td><td>${p(w)}</td><td>${p(l)}</td><td>empate ${p(d)}</td></tr></table>
+ <p class="note">Rating, forma y campo se miden en puntos Elo. Su ventaja total ${sg(dR+dF+dH)} pts se traduce en una diferencia esperada de goles; esa parte "sistemática" se reparte entre los tres factores según su peso en puntos. El azar es la varianza del reparto de goles (Poisson) frente a esa diferencia esperada.</p>`}
+document.addEventListener("click",e=>{const b=e.target.closest(".lupa");if(b){$("dc").innerHTML=analizar(reg[+b.dataset.i]);$("dlg").showModal()}});
+$("dat").onclick=()=>{$("dc").innerHTML="<h3>Datos usados</h3><table><tr><th>Equipo</th><th>Integrado</th><th>Directo</th><th>Usado</th></tr>"+todos0().map(e=>`<tr><td>${esc(e)}</td><td>${RATINGS[e]}</td><td>${buscar(e)??"—"}</td><td>${Math.round(rating(e))}</td></tr>`).join("")+"</table>";$("dlg").showModal()};
+$("upd").onclick=actualizar;let tm;$("auto").onchange=e=>{clearInterval(tm);if(e.target.checked)tm=setInterval(actualizar,30*60*1000)};
+const tab=n=>{$("tor").hidden=n!==1;$("pv").hidden=n!==2;$("t1").className=n===1?"":"sec";$("t2").className=n===2?"":"sec"};
+$("t1").onclick=()=>tab(1);$("t2").onclick=()=>tab(2);
+$("eqs").innerHTML=todos0().map(e=>`<option value="${esc(e)}">`).join("");
+$("grp").innerHTML='<option value="">Aleatorio</option>'+"ABCDEFGH".split("").map((c,i)=>`<option value="${i}">Grupo ${c}</option>`).join("");
+$("sim").onclick=()=>{const c=n=>todos0().find(e=>e.toLowerCase()===n.toLowerCase())||n,a=c($("pa").value.trim()),b=c($("pb").value.trim());
+ if(!a||!b||a===b){alert("Elige dos equipos distintos");return}
+ forma[a]=gauss(0,VARIACION_FORMA);forma[b]=gauss(0,VARIACION_FORMA);
+ const[ga,gb,id]=jugar(a,b,$("neu").checked),d=document.createElement("div");d.className="card champ";d.innerHTML=`${esc(a)} ${ga}-${gb} ${esc(b)} ${lp(id)}`;$("pvout").prepend(d)};
+actualizar();
 </script></body></html>
